@@ -21,6 +21,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / '.env')
 
+
+def require_env(name):
+    """Return a required environment variable, failing fast if it is missing."""
+    value = os.environ.get(name)
+    if not value:
+        raise ImproperlyConfigured(f'Environment variable {name} must be set.')
+    return value
+
+
 # Environment-specific settings are read from environment variables.
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -83,10 +92,15 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# The same POSTGRES_* variables configure the Docker Compose `db` service.
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': require_env('POSTGRES_DB'),
+        'USER': require_env('POSTGRES_USER'),
+        'PASSWORD': require_env('POSTGRES_PASSWORD'),
+        'HOST': os.environ.get('POSTGRES_HOST', '127.0.0.1'),
+        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
     }
 }
 
