@@ -1,7 +1,7 @@
 # Progress
 
 ## Current milestone
-Read-only REST API for datasets and records
+CSV upload (`POST /api/datasets/upload/`)
 
 ## Completed
 - Vue frontend structure
@@ -12,6 +12,7 @@ Read-only REST API for datasets and records
 - Settings read from environment variables, loaded from `backend/.env` via python-dotenv
 - PostgreSQL 17 in Docker Compose (`db` service); Django connected; initial migrations applied
 - `datasets` app: `Dataset` and `SampleRecord` models, initial migration, admin, model tests
+- Read-only API: `GET /api/datasets/`, `/api/datasets/{id}/`, `/api/datasets/{id}/records/`; verified end to end through the Vite proxy
 
 ## Decisions
 - Fixed CSV schema for MVP
@@ -27,6 +28,8 @@ Read-only REST API for datasets and records
 - `value` is a `FloatField`: measurements are floating-point, and `DecimalField` would serialize as a string; NaN/Infinity must be rejected on upload (not valid JSON)
 - `category` is free text for now; no predefined choices before we see real data
 - Uniqueness rules are enforced by database constraints, not only by validation (safe under concurrent requests)
+- One `DatasetViewSet` (`ReadOnlyModelViewSet`) with a `records` action; no nested-router package for a single nested URL
+- `AllowAny` set explicitly in `REST_FRAMEWORK`: the MVP has no authentication, and changing it must be deliberate
 
 ## Known issues
 - Compose `env_file` passes all of `backend/.env` (including `DJANGO_SECRET_KEY`) to the `db` container; scope per service before deployment
@@ -34,8 +37,12 @@ Read-only REST API for datasets and records
 - Dataset name uniqueness is case- and whitespace-sensitive; the upload serializer should strip whitespace
 
 ## Next
-- Read-only API: `GET /api/datasets/`, `/api/datasets/{id}/`, `/api/datasets/{id}/records/`
-- Then CSV upload (`POST /api/datasets/upload/`) as a separate iteration
+- CSV upload (`POST /api/datasets/upload/`): validation, transaction, error format
+
+## Planned (after MVP, before AWS deployment)
+- JWT authentication with djangorestframework-simplejwt: short-lived access token in memory, refresh token in an httpOnly cookie, rotation + blacklist
+- Then Docker setup for Django, then AWS deployment
 
 ## Open questions
 - CSV validation error format
+- Dataset ownership per user (needs an `owner` FK; decide before real data exists)
