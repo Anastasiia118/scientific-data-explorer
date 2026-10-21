@@ -1,4 +1,4 @@
-from rest_framework import viewsets
+from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -6,7 +6,7 @@ from .models import Dataset
 from .serializers import DatasetSerializer, SampleRecordSerializer
 
 
-class DatasetViewSet(viewsets.ReadOnlyModelViewSet):
+class DatasetViewSet(ReadOnlyModelViewSet):
     """
     GET /datasets/               list datasets, newest first
     GET /datasets/{id}/          retrieve one dataset
@@ -22,5 +22,14 @@ class DatasetViewSet(viewsets.ReadOnlyModelViewSet):
     def records(self, request, pk=None):
         # get_object() returns 404 for an unknown dataset instead of an empty list.
         dataset = self.get_object()
-        serializer = SampleRecordSerializer(dataset.records.all(), many=True)
+        records = dataset.records.all()
+        page = self.paginate_queryset(records)
+
+        if page is not None:
+            serializer = SampleRecordSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+ 
+        serializer = SampleRecordSerializer(records, many=True)
+
+
         return Response(serializer.data)

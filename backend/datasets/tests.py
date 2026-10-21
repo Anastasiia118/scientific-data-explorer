@@ -1,9 +1,10 @@
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from .csv_import import MAX_ROWS, ParsedRow, parse_records
 from .models import Dataset, SampleRecord
 
 
@@ -94,3 +95,134 @@ class DatasetRecordsApiTests(APITestCase):
         # One query for the dataset, one for all of its records.
         with self.assertNumQueries(2):
             self.client.get(self.url)
+
+
+HEADER = 'sample_id,category,value'
+
+
+def csv_text(*lines):
+    return '\n'.join(lines) + '\n'
+
+
+class ParseRecordsTests(SimpleTestCase):
+    def assertErrors(self, text, expected):
+        rows, errors = parse_records(text)
+        self.assertEqual(rows, [])
+        self.assertEqual(errors, expected)
+
+    def test_valid_file_returns_stripped_rows_in_order(self):
+        rows, errors = parse_records(csv_text(HEADER, ' S1 , a , 1.5', 'S2,"b, c",-2'))
+
+        self.assertEqual(errors, [])
+        self.assertEqual(rows, [ParsedRow('S1', 'a', 1.5), ParsedRow('S2', 'b, c', -2.0)])
+
+    def test_accepts_crlf_and_spaces_in_header(self):
+        rows, errors = parse_records('sample_id, category, value\r\nS1,a,1\r\n')
+
+        self.assertEqual(errors, [])
+        self.assertEqual(rows, [ParsedRow('S1', 'a', 1.0)])
+
+    def test_row_numbers_are_physical_lines_and_blank_lines_are_skipped(self):
+        self.assertErrors(
+            csv_text(HEADER, 'S1,a,x', '', 'S2,a,y'),
+            ["Row 2: 'value' must be a number, got 'x'.", "Row 4: 'value' must be a number, got 'y'."],
+        )
+
+    def test_row_numbers_account_for_newlines_inside_quotes(self):
+        self.assertErrors(
+            csv_text(HEADER, 'S1,"multi', 'line",1', 'S2,a,x'),
+            ["Row 4: 'value' must be a number, got 'x'."],
+        )
+
+    def test_wrong_header_is_the_only_error(self):
+        self.assertErrors(
+            csv_text('id,category,value', 'S1,a,x'),
+            ["Row 1: header must be 'sample_id,category,value', got 'id,category,value'."],
+        )
+
+    def test_empty_file(self):
+        self.assertErrors('', ['File is empty.'])
+        self.assertErrors('\n\n', ['File is empty.'])
+
+    def test_header_only(self):
+        self.assertErrors(csv_text(HEADER), ['File contains no data rows.'])
+
+    def test_wrong_column_count(self):
+        self.assertErrors(csv_text(HEADER, 'S1,a'), ['Row 2: expected 3 columns, got 2.'])
+
+    def test_required_and_too_long_text(self):
+        self.assertErrors(
+            csv_text(HEADER, ' ,,', f"S1,{'x' * 101},1"),
+            [
+                "Row 2: 'sample_id' is required.",
+                "Row 2: 'category' is required.",
+                "Row 2: 'value' is required.",
+                "Row 3: 'category' must be at most 100 characters.",
+            ],
+        )
+
+    def test_accepted_number_formats(self):
+        for raw, expected in [('1.5', 1.5), ('-2', -2.0), ('+4', 4.0), ('.5', 0.5),
+                              ('3.', 3.0), ('1e3', 1000.0), ('1E-3', 0.001)]:
+            with self.subTest(raw=raw):
+                rows, errors = parse_records(csv_text(HEADER, f'S1,a,{raw}'))
+                self.assertEqual(errors, [])
+                self.assertEqual(rows[0].value, expected)
+
+    def test_rejected_number_formats(self):
+        for raw in ['1_000', 'nan', 'inf', '-Infinity', 'abc', '0x10', '1e', '١']:
+            with self.subTest(raw=raw):
+                self.assertErrors(
+                    csv_text(HEADER, f'S1,a,{raw}'),
+                    [f"Row 2: 'value' must be a number, got {raw!r}."],
+                )
+
+    def test_overflowing_number_is_rejected(self):
+        self.assertErrors(csv_text(HEADER, 'S1,a,1e999'), ["Row 2: 'value' is too large, got '1e999'."])
+
+    def test_duplicate_sample_id_reports_both_rows(self):
+        self.assertErrors(
+            csv_text(HEADER, 'S1,a,1', 'S2,a,2', 'S1,b,x'),
+            [
+                "Row 4: 'value' must be a number, got 'x'.",
+                "Row 4: duplicate sample_id 'S1' (first seen in row 2).",
+            ],
+        )
+
+    def test_malformed_csv_stops_parsing(self):
+        rows, errors = parse_records(csv_text(HEADER, 'S1,a,x', 'S2,"a"b,1', 'S3,a,y'))
+
+        self.assertEqual(rows, [])
+        self.assertEqual(errors[0], "Row 2: 'value' must be a number, got 'x'.")
+        self.assertTrue(errors[1].startswith('Row 3: malformed CSV'), errors[1])
+        self.assertEqual(len(errors), 2)
+
+    def test_unterminated_quote_is_malformed(self):
+        rows, errors = parse_records(csv_text(HEADER, 'S1,"a,1'))
+
+        self.assertEqual(rows, [])
+        self.assertTrue(errors[0].startswith('Row 2: malformed CSV'), errors)
+
+    def test_nul_character_is_rejected(self):
+        self.assertErrors(
+            csv_text(HEADER, 'S1,a\x00,1'),
+            ['File contains NUL characters; it does not look like a text CSV file.'],
+        )
+
+    def test_row_limit(self):
+        lines = [f'S{i},a,1' for i in range(MAX_ROWS)]
+        rows, errors = parse_records(csv_text(HEADER, *lines))
+        self.assertEqual((len(rows), errors), (MAX_ROWS, []))
+
+        self.assertErrors(
+            csv_text(HEADER, *lines, 'extra,a,1'),
+            ['File has more than 10,000 data rows.'],
+        )
+
+    def test_errors_are_capped(self):
+        rows, errors = parse_records(csv_text(HEADER, *[f'S{i},a,x' for i in range(15)]))
+
+        self.assertEqual(rows, [])
+        self.assertEqual(len(errors), 11)
+        self.assertEqual(errors[9], "Row 11: 'value' must be a number, got 'x'.")
+        self.assertEqual(errors[10], '...and 5 more errors.')
