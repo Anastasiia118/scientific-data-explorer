@@ -1,11 +1,14 @@
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 
 from .csv_import import MAX_ROWS, ParsedRow, parse_records
 from .models import Dataset, SampleRecord
+from .serializers import DatasetUploadSerializer
 
 
 class DatasetModelTests(TestCase):
@@ -226,3 +229,122 @@ class ParseRecordsTests(SimpleTestCase):
         self.assertEqual(len(errors), 11)
         self.assertEqual(errors[9], "Row 11: 'value' must be a number, got 'x'.")
         self.assertEqual(errors[10], '...and 5 more errors.')
+
+
+def csv_file(content, name='data.csv'):
+    if isinstance(content, str):
+        content = content.encode('utf-8')
+    return SimpleUploadedFile(name, content, content_type='text/csv')
+
+
+VALID_CSV = csv_text(HEADER, 'S1,a,1.5', 'S2,b,2')
+
+
+class DatasetUploadApiTests(APITestCase):
+    url = reverse('dataset-upload')
+
+    def upload(self, name='Run A', content=VALID_CSV):
+        return self.client.post(self.url, {'name': name, 'file': csv_file(content)}, format='multipart')
+
+    def test_creates_dataset_and_records(self):
+        response = self.upload()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        dataset = Dataset.objects.get()
+        self.assertEqual(response.data, {
+            'id': dataset.id, 'name': 'Run A', 'created_at': response.data['created_at'],
+        })
+        self.assertEqual(
+            list(dataset.records.values_list('sample_id', 'category', 'value')),
+            [('S1', 'a', 1.5), ('S2', 'b', 2.0)],
+        )
+
+    def test_name_is_stripped(self):
+        self.upload(name='  Run A  ')
+
+        self.assertEqual(Dataset.objects.get().name, 'Run A')
+
+    def test_duplicate_name_is_400(self):
+        Dataset.objects.create(name='Run A')
+
+        response = self.upload(name=' Run A ')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data, {'name': ['A dataset with this name already exists.']})
+
+    def test_missing_fields_are_400(self):
+        response = self.client.post(self.url, {}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(set(response.data), {'name', 'file'})
+
+    def test_invalid_rows_are_reported_and_nothing_is_saved(self):
+        response = self.upload(content=csv_text(HEADER, 'S1,a,1', 'S2,b,abc'))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data, {'file': ["Row 3: 'value' must be a number, got 'abc'."]})
+        self.assertFalse(Dataset.objects.exists())
+        self.assertFalse(SampleRecord.objects.exists())
+
+    def test_name_and_file_errors_are_reported_together(self):
+        Dataset.objects.create(name='Run A')
+
+        response = self.upload(content=csv_text(HEADER))
+
+        self.assertEqual(set(response.data), {'name', 'file'})
+
+    def test_file_over_1_mb_is_rejected(self):
+        content = VALID_CSV + 'x' * (1024 * 1024)
+
+        response = self.upload(content=content)
+
+        self.assertEqual(response.data, {'file': ['File must be at most 1 MB.']})
+
+    def test_non_utf8_file_is_rejected(self):
+        response = self.upload(content=csv_text(HEADER, 'S1,Größe,1').encode('latin-1'))
+
+        self.assertEqual(response.data, {'file': ['File must be UTF-8 encoded.']})
+
+    def test_utf8_byte_order_mark_is_accepted(self):
+        response = self.upload(content=b'\xef\xbb\xbf' + VALID_CSV.encode('utf-8'))
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_json_body_is_415(self):
+        response = self.client.post(self.url, {'name': 'Run A'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+    def test_get_is_405(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+class DatasetUploadSerializerTests(TestCase):
+    def test_name_taken_after_validation_is_a_validation_error(self):
+        # Simulates the race: another request creates the same name between
+        # validate_name() and the insert in create().
+        serializer = DatasetUploadSerializer(data={'name': 'Run A', 'file': csv_file(VALID_CSV)})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        Dataset.objects.create(name='Run A')
+
+        with self.assertRaises(ValidationError) as ctx:
+            serializer.save()
+
+        self.assertEqual(ctx.exception.detail, {'name': ['A dataset with this name already exists.']})
+        self.assertEqual(Dataset.objects.count(), 1)
+        self.assertFalse(SampleRecord.objects.exists())
+
+    def test_record_integrity_error_is_not_reported_as_duplicate_name(self):
+        # Duplicate rows that slipped past validation are a bug: the error must
+        # propagate (500) and the dataset insert must be rolled back.
+        serializer = DatasetUploadSerializer(data={'name': 'Run A', 'file': csv_file(VALID_CSV)})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        rows = serializer.validated_data['file']
+        serializer.validated_data['file'] = [rows[0], rows[0]]
+
+        with self.assertRaises(IntegrityError):
+            serializer.save()
+
+        self.assertFalse(Dataset.objects.exists())
