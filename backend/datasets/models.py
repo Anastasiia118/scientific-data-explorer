@@ -5,6 +5,11 @@ class Dataset(models.Model):
     """A named collection of sample records created from one uploaded CSV file."""
 
     name = models.CharField(max_length=255, unique=True)
+    # SHA-256 of the uploaded file's bytes, used to reject identical re-uploads.
+    # Nullable because datasets created before hashing have no file to hash;
+    # PostgreSQL allows any number of NULLs in a unique column. Becomes unique
+    # per owner once datasets have owners.
+    content_hash = models.CharField(max_length=64, unique=True, null=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -17,6 +17,13 @@ class DatasetModelTests(TestCase):
         with self.assertRaises(IntegrityError):
             Dataset.objects.create(name='Run A')
 
+    def test_content_hash_must_be_unique_but_may_be_missing(self):
+        Dataset.objects.create(name='Run A')
+        Dataset.objects.create(name='Run B')
+        Dataset.objects.create(name='Run C', content_hash='abc')
+        with self.assertRaises(IntegrityError):
+            Dataset.objects.create(name='Run D', content_hash='abc')
+
     def test_deleting_dataset_deletes_its_records(self):
         dataset = Dataset.objects.create(name='Run A')
         SampleRecord.objects.create(dataset=dataset, sample_id='S1', category='a', value=1.0)
@@ -310,6 +317,24 @@ class DatasetUploadApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    def test_same_file_with_different_name_is_rejected(self):
+        self.upload(name='Run A')
+
+        response = self.upload(name='Run B')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data, {'file': ["This file was already uploaded as 'Run A'."]})
+        self.assertEqual(Dataset.objects.count(), 1)
+
+    def test_same_rows_with_different_bytes_are_accepted(self):
+        # Duplicates are identical bytes, not identical content: CRLF line endings
+        # make this a different file.
+        self.upload(name='Run A')
+
+        response = self.upload(name='Run B', content=VALID_CSV.replace('\n', '\r\n'))
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
     def test_json_body_is_415(self):
         response = self.client.post(self.url, {'name': 'Run A'}, format='json')
 
@@ -336,13 +361,24 @@ class DatasetUploadSerializerTests(TestCase):
         self.assertEqual(Dataset.objects.count(), 1)
         self.assertFalse(SampleRecord.objects.exists())
 
+    def test_file_uploaded_after_validation_is_a_validation_error(self):
+        serializer = DatasetUploadSerializer(data={'name': 'Run A', 'file': csv_file(VALID_CSV)})
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        Dataset.objects.create(name='Run B', content_hash=serializer.validated_data['file']['content_hash'])
+
+        with self.assertRaises(ValidationError) as ctx:
+            serializer.save()
+
+        self.assertEqual(ctx.exception.detail, {'file': ["This file was already uploaded as 'Run B'."]})
+        self.assertFalse(Dataset.objects.filter(name='Run A').exists())
+
     def test_record_integrity_error_is_not_reported_as_duplicate_name(self):
         # Duplicate rows that slipped past validation are a bug: the error must
         # propagate (500) and the dataset insert must be rolled back.
         serializer = DatasetUploadSerializer(data={'name': 'Run A', 'file': csv_file(VALID_CSV)})
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        rows = serializer.validated_data['file']
-        serializer.validated_data['file'] = [rows[0], rows[0]]
+        rows = serializer.validated_data['file']['rows']
+        serializer.validated_data['file']['rows'] = [rows[0], rows[0]]
 
         with self.assertRaises(IntegrityError):
             serializer.save()

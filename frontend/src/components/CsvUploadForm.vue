@@ -73,6 +73,23 @@ function onSubmit(): void {
   font-size: 14px;
 }
 
+.csv-upload__input::file-selector-button {
+  background-color: var(--color-input-background);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 6px 16px;
+  margin-right: 12px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.csv-upload__input::file-selector-button:hover {
+  background-color: #e0e7ff;
+}
+
 .csv-upload__text {
   padding: 6px 10px;
   border: 1px solid var(--color-border);
