@@ -4,15 +4,17 @@ import AppMenu from './components/AppMenu.vue'
 </script>
 
 <template>
-  <div class="app-layout">
-    <AppHeader />
-    <div class="app-body">
-      <AppMenu />
-      <main class="app-content">
-        <RouterView />
-      </main>
+  <v-app>
+    <div class="app-layout">
+      <AppHeader />
+      <div class="app-body">
+        <AppMenu />
+        <main class="app-content">
+          <RouterView />
+        </main>
+      </div>
     </div>
-  </div>
+  </v-app>
 </template>
 
 <style scoped>
