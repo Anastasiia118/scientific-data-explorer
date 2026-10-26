@@ -6,70 +6,37 @@ defineProps<{
   loading?: boolean
 }>()
 
-// The CSV schema is fixed, so the columns are too.
-const columns: { key: keyof SampleRecord; label: string }[] = [
-  { key: 'sample_id', label: 'Sample ID' },
-  { key: 'category', label: 'Category' },
-  { key: 'value', label: 'Value' },
+// The CSV schema is fixed, so the columns are too. Numbers are right-aligned
+// so their digits line up.
+const headers: { key: keyof SampleRecord; title: string; align?: 'end' }[] = [
+  { key: 'sample_id', title: 'Sample ID' },
+  { key: 'category', title: 'Category' },
+  { key: 'value', title: 'Value', align: 'end' },
 ]
+
+// All records are already loaded, so sorting and paging happen in the
+// browser; the API is not paginated.
+const itemsPerPageOptions = [10, 25, 50, 100]
 </script>
 
 <template>
-  <div class="data-table__wrapper">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th v-for="column in columns" :key="column.key">{{ column.label }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="record in records" :key="record.id">
-          <td v-for="column in columns" :key="column.key">{{ record[column.key] }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p v-if="loading" class="data-table__message">Loading records...</p>
-    <p v-else-if="records.length === 0" class="data-table__message">No records to display.</p>
-  </div>
+  <v-data-table
+    class="data-table"
+    :headers="headers"
+    :items="records"
+    item-value="id"
+    :items-per-page="25"
+    :items-per-page-options="itemsPerPageOptions"
+    :loading="loading"
+    loading-text="Loading records..."
+    no-data-text="No records to display."
+    density="compact"
+  />
 </template>
 
 <style scoped>
-.data-table__wrapper {
-  overflow-x: auto;
-  background: var(--color-surface);
+.data-table {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.data-table th,
-.data-table td {
-  padding: 10px 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--color-border);
-  white-space: nowrap;
-}
-
-.data-table th {
-  font-weight: 600;
-  color: var(--color-text-muted);
-  background: var(--color-bg);
-}
-
-.data-table tbody tr:hover {
-  background: var(--color-bg);
-}
-
-.data-table__message {
-  margin: 0;
-  padding: 24px;
-  color: var(--color-text-muted);
-  text-align: center;
-  font-size: 14px;
 }
 </style>
