@@ -14,9 +14,11 @@ MVP: CSV upload → Vuetify table → chart
 - `datasets` app: `Dataset` and `SampleRecord` models, initial migration, admin, model tests
 - Read-only API: `GET /api/datasets/`, `/api/datasets/{id}/`, `/api/datasets/{id}/records/`; verified end to end through the Vite proxy
 - CSV upload API: `POST /api/datasets/upload/` (multipart `name` + `file`); row-numbered validation, all-or-nothing import; verified through the Vite proxy and manually in the browser (valid, invalid and 150-row files)
+- Re-uploads of an identical file are rejected (`Dataset.content_hash`, migration `0002`); covered by tests
+- Root `README.md` with local setup, checks and the API overview
 
 ## In progress
-- Reject re-uploads of an identical file (SHA-256 of the file bytes)
+- None
 
 ## Decisions
 - Fixed CSV schema for MVP
@@ -40,6 +42,7 @@ MVP: CSV upload → Vuetify table → chart
 - `value` accepts decimal and scientific notation only (`1.5`, `1e3`); underscores, NaN and Infinity are rejected
 - Upload is one transaction (`transaction.atomic` + `bulk_create`); only an `IntegrityError` on the dataset insert that is confirmed to be a duplicate name becomes a 400; any other constraint violation is a bug and stays a 500
 - Dataset ownership (`owner` FK) is added together with JWT authentication, not before
+- A duplicate file means identical bytes (SHA-256), not identical rows: simple and predictable. Rejected with a 400 that names the existing dataset. `content_hash` is nullable (datasets created before hashing have no file to hash); it becomes unique per owner once auth arrives, so one user's uploads are not revealed to another
 
 ## Known issues
 - Compose `env_file` passes all of `backend/.env` (including `DJANGO_SECRET_KEY`) to the `db` container; scope per service before deployment
