@@ -126,6 +126,54 @@ class DatasetRecordsApiTests(APITestCase):
         self.assertEqual(self.sample_ids({'search': 'nothing'}), [])
 
 
+class DatasetStatsApiTests(APITestCase):
+    def setUp(self):
+        self.dataset = Dataset.objects.create(name='Run A')
+        other = Dataset.objects.create(name='Run B')
+        for sample_id, category, value in [
+            ('S1', 'treated', 3.0),
+            ('S2', 'control', 1.0),
+            ('S3', 'treated', 5.0),
+            ('S4', 'control', 2.0),
+            ('S5', 'treated', 1.0),
+        ]:
+            SampleRecord.objects.create(
+                dataset=self.dataset, sample_id=sample_id, category=category, value=value
+            )
+        SampleRecord.objects.create(dataset=other, sample_id='S9', category='control', value=100.0)
+        self.url = reverse('dataset-stats', args=[self.dataset.id])
+
+    def test_returns_statistics_per_category_sorted_by_name(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data,
+            [
+                {'category': 'control', 'count': 2, 'min': 1.0, 'avg': 1.5, 'max': 2.0},
+                {'category': 'treated', 'count': 3, 'min': 1.0, 'avg': 3.0, 'max': 5.0},
+            ],
+        )
+
+    def test_dataset_without_records_returns_empty_list(self):
+        empty = Dataset.objects.create(name='Empty')
+
+        response = self.client.get(reverse('dataset-stats', args=[empty.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, [])
+
+    def test_stats_of_unknown_dataset_is_404(self):
+        response = self.client.get(reverse('dataset-stats', args=[999999]))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_query_count_does_not_grow_with_records(self):
+        # The dataset and one aggregate query.
+        with self.assertNumQueries(2):
+            self.client.get(self.url)
+
+
 class DatasetRecordsPaginationTests(APITestCase):
     def setUp(self):
         self.dataset = Dataset.objects.create(name='Run A')

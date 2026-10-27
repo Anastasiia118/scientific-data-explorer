@@ -1,3 +1,4 @@
+from django.db.models import Avg, Count, Max, Min
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import action
@@ -16,6 +17,7 @@ class DatasetViewSet(ReadOnlyModelViewSet):
     """
     GET /datasets/               list datasets, newest first
     GET /datasets/{id}/          retrieve one dataset
+    GET /datasets/{id}/stats/    value statistics per category
     POST /datasets/upload/       create a dataset from a CSV file
     """
 
@@ -32,6 +34,19 @@ class DatasetViewSet(ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
         dataset = serializer.save()
         return Response(DatasetSerializer(dataset).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True)
+    def stats(self, request, pk=None):
+        # One GROUP BY query over all records, so the response size depends on
+        # the number of categories, not rows. Feeds the chart, which cannot use
+        # the table's paginated records.
+        dataset = self.get_object()
+        stats = (
+            dataset.records.values('category')
+            .annotate(count=Count('id'), min=Min('value'), avg=Avg('value'), max=Max('value'))
+            .order_by('category')
+        )
+        return Response(list(stats))
 
 
 class RecordPagination(PageNumberPagination):
