@@ -10,16 +10,16 @@ const emit = defineEmits<{
 }>()
 
 const name = ref('')
-const selectedFile = ref<File | null>(null)
+// v-file-input's model is typed File | File[] | null; without `multiple` it
+// holds a single File (or null once cleared).
+const fileModel = ref<File | File[] | null>(null)
+const selectedFile = computed(() =>
+  Array.isArray(fileModel.value) ? (fileModel.value[0] ?? null) : fileModel.value,
+)
 
 const canSubmit = computed(
   () => name.value.trim() !== '' && selectedFile.value !== null && !props.uploading,
 )
-
-function onFileChange(event: Event): void {
-  const input = event.target as HTMLInputElement
-  selectedFile.value = input.files?.[0] ?? null
-}
 
 // The inputs are kept after submitting so the user can retry if the upload
 // fails; on success the parent navigates away.
@@ -31,88 +31,70 @@ function onSubmit(): void {
 
 <template>
   <form class="csv-upload" @submit.prevent="onSubmit">
-    <label class="csv-upload__label">
-      Dataset name
-      <input v-model="name" type="text" class="csv-upload__text" />
-    </label>
-    <label class="csv-upload__label">
-      CSV file
-      <input
-        type="file"
-        accept=".csv,text/csv"
-        class="csv-upload__input"
-        @change="onFileChange"
-      />
-    </label>
-    <button
+    <!-- Persistent "Required" hints explain why Upload is disabled. -->
+    <v-text-field
+      v-model="name"
+      class="csv-upload__field"
+      label="Dataset name"
+      hint="Required"
+      persistent-hint
+      density="compact"
+      variant="outlined"
+      rounded="lg"
+      bg-color="surface"
+    />
+    <v-file-input
+      v-model="fileModel"
+      class="csv-upload__field"
+      label="CSV file"
+      accept=".csv,text/csv"
+      hint="Required · at most 1 MB"
+      persistent-hint
+      prepend-icon=""
+      prepend-inner-icon="mdi-paperclip"
+      density="compact"
+      variant="outlined"
+      rounded="lg"
+      bg-color="surface"
+    />
+    <v-btn
       type="submit"
-      class="csv-upload__button"
+      color="primary"
       :disabled="!canSubmit"
+      :loading="props.uploading"
+      rounded="lg"
     >
-      {{ props.uploading ? 'Uploading...' : 'Upload' }}
-    </button>
+      Upload
+    </v-btn>
   </form>
 </template>
 
 <style scoped>
 .csv-upload {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 12px;
 }
 
-.csv-upload__label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+.csv-upload__field {
+  flex: 0 1 280px;
+}
+
+/* Vertically centre the button on the inputs, not on inputs + hints. */
+.csv-upload .v-btn {
+  margin-top: 2px;
+}
+
+
+:deep(.v-field--variant-outlined .v-field__outline) {
+  color: var(--color-border);
+  --v-field-border-opacity: 1; 
+}
+:deep(.v-field--variant-outlined:hover .v-field__outline) {
+  color: #c4c9d0; 
+}
+:deep(.v-field--variant-outlined .v-field-label--floating) {
   color: var(--color-text-muted);
 }
 
-.csv-upload__input {
-  font-size: 14px;
-}
-
-.csv-upload__input::file-selector-button {
-  background-color: var(--color-input-background);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 6px 16px;
-  margin-right: 12px;
-  font: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.1s;
-}
-
-.csv-upload__input::file-selector-button:hover {
-  background-color: #e0e7ff;
-}
-
-.csv-upload__text {
-  padding: 6px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  font-size: 14px;
-}
-
-.csv-upload__button {
-  padding: 8px 16px;
-  border: none;
-  border-radius: var(--radius);
-  background: var(--color-accent);
-  color: #fff;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.csv-upload__button:hover:not(:disabled) {
-  background: var(--color-accent-dark);
-}
-
-.csv-upload__button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 </style>

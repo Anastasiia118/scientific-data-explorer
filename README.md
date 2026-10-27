@@ -3,14 +3,14 @@
 A full-stack project for uploading, validating and browsing structured
 research datasets. All data is synthetic.
 
-**Status:** MVP in progress. CSV upload and the read-only API work end to end;
-the Vuetify table and chart are next. See [`docs/progress.md`](docs/progress.md).
+**Status:** MVP in progress. CSV upload and a server-side paginated, sortable and
+searchable records table work end to end; the chart is next. See [`docs/progress.md`](docs/progress.md).
 
 ## Stack
 
 - **Backend:** Python 3.13, Django 5.2, Django REST Framework
 - **Database:** PostgreSQL 17, run with Docker Compose
-- **Frontend:** Vue 3, TypeScript, Vite, Pinia, Vue Router (plain CSS for now; Vuetify planned)
+- **Frontend:** Vue 3, TypeScript, Vite, Pinia, Vue Router, Vuetify 4 (some components still use plain CSS)
 
 ## Project layout
 
@@ -74,8 +74,23 @@ There is no authentication yet; every endpoint is public.
 | ------ | ----------------------------- | ---------------------------------------------------- |
 | GET    | `/api/datasets/`              | List datasets, newest first                          |
 | GET    | `/api/datasets/{id}/`         | Retrieve one dataset                                 |
-| GET    | `/api/datasets/{id}/records/` | List a dataset's records in CSV row order            |
+| GET    | `/api/datasets/{id}/records/` | List a dataset's records, paginated (see below)      |
 | POST   | `/api/datasets/upload/`       | Multipart `name` + `file`; returns the new dataset (201) |
+
+### Records: pagination, sorting and search
+
+`GET /api/datasets/{id}/records/` accepts these query parameters:
+
+- `page`: page number, starting at 1; a page past the end is a 404
+- `page_size`: 1–100, default 25
+- `ordering`: `sample_id`, `category` or `value`, prefixed with `-` for descending (for example `-value`). Default: CSV row order. Unknown fields are ignored
+- `search`: case-insensitive substring match on `sample_id` or `category`
+
+Search and sorting apply to all records before paginating. The response:
+
+```json
+{"count": 150, "next": "...", "previous": null, "results": [{"id": 1, "sample_id": "S-001", "category": "control", "value": 1.5}]}
+```
 
 ### CSV format
 

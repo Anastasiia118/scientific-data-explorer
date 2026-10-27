@@ -16,6 +16,9 @@ MVP: CSV upload → Vuetify table → chart
 - CSV upload API: `POST /api/datasets/upload/` (multipart `name` + `file`); row-numbered validation, all-or-nothing import; verified through the Vite proxy and manually in the browser (valid, invalid and 150-row files)
 - Re-uploads of an identical file are rejected (`Dataset.content_hash`, migration `0002`); covered by tests
 - Root `README.md` with local setup, checks and the API overview
+- Vuetify 4 installed; theme colors match `style.css`; light theme pinned (no dark styles yet)
+- Server-side pagination, sorting and search for records: `GET /api/datasets/{id}/records/` with `page`, `page_size` (default 25, max 100), `ordering`, `search`; `v-data-table-server` in the frontend (debounced search, outdated requests cancelled); verified in the browser
+- Upload form on Vuetify (`v-text-field`, `v-file-input`, `v-btn`) with persistent "Required" hints; outlined fields restyled to match `style.css` (8px radius, light grey border); verified in the browser
 
 ## In progress
 - None
@@ -23,7 +26,7 @@ MVP: CSV upload → Vuetify table → chart
 ## Decisions
 - Fixed CSV schema for MVP
 - PostgreSQL as primary database
-- No pagination in initial MVP: single client and small CSVs; enforce a row limit on upload instead
+- Records are paginated on the server: an upload can have up to 10,000 rows. Ordering always ends with `id`, so pages are stable when values tie
 - Python 3.13 (Homebrew); venv + pip; `requirements.txt` lists direct dependencies only, pinned exactly
 - python-dotenv for loading `.env` (django-environ considered, not needed yet)
 - `DEBUG` defaults to off; a missing `DJANGO_SECRET_KEY` is an error unless `DEBUG` is on
@@ -34,7 +37,8 @@ MVP: CSV upload → Vuetify table → chart
 - `value` is a `FloatField`: measurements are floating-point, and `DecimalField` would serialize as a string; NaN/Infinity are rejected on upload (not valid JSON)
 - `category` is free text for now; no predefined choices before we see real data
 - Uniqueness rules are enforced by database constraints, not only by validation (safe under concurrent requests)
-- One `DatasetViewSet` (`ReadOnlyModelViewSet`) with `records` and `upload` actions; no nested-router package for a single nested URL
+- `DatasetViewSet` (`ReadOnlyModelViewSet` + `upload` action) for datasets; records have their own `ListAPIView`, because the endpoint has its own pagination and filters (`@action` cannot set `search_fields`/`ordering_fields`). No nested-router package for a single nested URL
+- Record search uses DRF's `SearchFilter`; exact field filters (`django-filter`) wait until a UI needs them
 - `AllowAny` set explicitly in `REST_FRAMEWORK`: the MVP has no authentication, and changing it must be deliberate
 - CSV parsing lives in `datasets/csv_import.py` with no Django imports (testable without HTTP/DB, reusable for other input sources); built-in `csv` module with `strict=True`, no pandas
 - Upload limits: file ≤ 1 MB (checked before reading), UTF-8 (`utf-8-sig`, so Excel's BOM is accepted), 1–10,000 data rows
@@ -48,12 +52,11 @@ MVP: CSV upload → Vuetify table → chart
 - Compose `env_file` passes all of `backend/.env` (including `DJANGO_SECRET_KEY`) to the `db` container; scope per service before deployment
 
 ## Next
-- Vuetify table for dataset records
-- Chart of record values
+- Chart of record values (last MVP item)
 
 ## Planned (after MVP, before AWS deployment)
 - JWT authentication with djangorestframework-simplejwt: short-lived access token in memory, refresh token in an httpOnly cookie, rotation + blacklist; add `Dataset.owner` at the same time
 - Then Docker setup for Django, then AWS deployment
 
 ## Open questions
-- None currently
+- Chart data: records are paginated, so the chart cannot use the table's page. Proposed: a small aggregated endpoint (e.g. value statistics per category) over all records; not decided yet
