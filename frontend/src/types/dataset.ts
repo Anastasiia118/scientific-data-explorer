@@ -20,3 +20,10 @@ export interface SampleRecord {
   category: string
   value: number
 }
+
+/** One page of a paginated list, as returned by DRF's PageNumberPagination. */
+export interface Page<T> {
+  /** Number of matching items across all pages. */
+  count: number
+  results: T[]
+}

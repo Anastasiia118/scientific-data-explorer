@@ -86,14 +86,20 @@ class DatasetRecordsApiTests(APITestCase):
         SampleRecord.objects.create(dataset=other, sample_id='S9', category='c', value=9.0)
         self.url = reverse('dataset-records', args=[self.dataset.id])
 
+    def sample_ids(self, params=None):
+        response = self.client.get(self.url, params)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return [r['sample_id'] for r in response.data['results']]
+
     def test_returns_only_this_datasets_records_in_insertion_order(self):
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual([r['sample_id'] for r in response.data], ['S2', 'S1'])
+        self.assertEqual(response.data['count'], 2)
+        self.assertEqual([r['sample_id'] for r in response.data['results']], ['S2', 'S1'])
+        first = response.data['results'][0]
         self.assertEqual(
-            response.data[0],
-            {'id': response.data[0]['id'], 'sample_id': 'S2', 'category': 'a', 'value': 2.5},
+            first, {'id': first['id'], 'sample_id': 'S2', 'category': 'a', 'value': 2.5}
         )
 
     def test_records_of_unknown_dataset_is_404(self):
@@ -102,9 +108,89 @@ class DatasetRecordsApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_query_count_does_not_grow_with_records(self):
-        # One query for the dataset, one for all of its records.
-        with self.assertNumQueries(2):
+        # The dataset, the total count, and one page of records.
+        with self.assertNumQueries(3):
             self.client.get(self.url)
+
+    def test_orders_ascending_and_descending(self):
+        self.assertEqual(self.sample_ids({'ordering': 'value'}), ['S1', 'S2'])
+        self.assertEqual(self.sample_ids({'ordering': '-value'}), ['S2', 'S1'])
+        self.assertEqual(self.sample_ids({'ordering': 'sample_id'}), ['S1', 'S2'])
+
+    def test_unknown_ordering_field_is_ignored(self):
+        self.assertEqual(self.sample_ids({'ordering': 'dataset__name'}), ['S2', 'S1'])
+
+    def test_search_matches_sample_id_or_category_case_insensitively(self):
+        self.assertEqual(self.sample_ids({'search': 's1'}), ['S1'])
+        self.assertEqual(self.sample_ids({'search': 'A'}), ['S2'])
+        self.assertEqual(self.sample_ids({'search': 'nothing'}), [])
+
+
+class DatasetRecordsPaginationTests(APITestCase):
+    def setUp(self):
+        self.dataset = Dataset.objects.create(name='Run A')
+        # 120 records; every value is 1.0 except S5 and S7, so most rows tie
+        # when sorting by value.
+        SampleRecord.objects.bulk_create(
+            SampleRecord(
+                dataset=self.dataset,
+                sample_id=f'S{i}',
+                category='even' if i % 2 == 0 else 'odd',
+                value=0.5 if i in (5, 7) else 1.0,
+            )
+            for i in range(1, 121)
+        )
+        self.url = reverse('dataset-records', args=[self.dataset.id])
+
+    def get(self, params=None):
+        response = self.client.get(self.url, params)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_default_page_size_is_25(self):
+        data = self.get()
+
+        self.assertEqual(data['count'], 120)
+        self.assertEqual(len(data['results']), 25)
+        self.assertIsNone(data['previous'])
+        self.assertIsNotNone(data['next'])
+
+    def test_page_size_can_be_chosen_and_is_capped_at_100(self):
+        self.assertEqual(len(self.get({'page_size': 10})['results']), 10)
+        self.assertEqual(len(self.get({'page_size': 500})['results']), 100)
+
+    def test_invalid_page_size_falls_back_to_default(self):
+        self.assertEqual(len(self.get({'page_size': 'abc'})['results']), 25)
+        self.assertEqual(len(self.get({'page_size': 0})['results']), 25)
+
+    def test_page_out_of_range_is_404(self):
+        response = self.client.get(self.url, {'page': 99})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_sorting_is_applied_before_paginating(self):
+        # The two lowest values are on rows 5 and 7, but sorted they come first.
+        first_page = self.get({'ordering': 'value', 'page_size': 10})['results']
+
+        self.assertEqual([r['sample_id'] for r in first_page[:2]], ['S5', 'S7'])
+
+    def test_tied_values_have_a_stable_order_across_pages(self):
+        # Every record appears exactly once when paging through tied values.
+        seen = []
+        for page in (1, 2, 3, 4, 5):
+            data = self.get({'ordering': '-value', 'page_size': 25, 'page': page})
+            seen += [r['id'] for r in data['results']]
+
+        self.assertEqual(len(seen), 120)
+        self.assertEqual(len(set(seen)), 120)
+        # The 118 tied values of 1.0 come first, in CSV row order.
+        self.assertEqual(seen[:118], sorted(seen[:118]))
+
+    def test_search_is_applied_before_paginating(self):
+        data = self.get({'search': 'even', 'page_size': 10})
+
+        self.assertEqual(data['count'], 60)
+        self.assertTrue(all(r['category'] == 'even' for r in data['results']))
 
 
 HEADER = 'sample_id,category,value'
