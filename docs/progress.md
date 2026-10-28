@@ -1,7 +1,7 @@
 # Progress
 
 ## Current milestone
-MVP: CSV upload → Vuetify table → chart
+MVP complete (CSV upload → Vuetify table → chart). Next: JWT authentication
 
 ## Completed
 - Vue frontend structure
@@ -19,6 +19,8 @@ MVP: CSV upload → Vuetify table → chart
 - Vuetify 4 installed; theme colors match `style.css`; light theme pinned (no dark styles yet)
 - Server-side pagination, sorting and search for records: `GET /api/datasets/{id}/records/` with `page`, `page_size` (default 25, max 100), `ordering`, `search`; `v-data-table-server` in the frontend (debounced search, outdated requests cancelled); verified in the browser
 - Upload form on Vuetify (`v-text-field`, `v-file-input`, `v-btn`) with persistent "Required" hints; outlined fields restyled to match `style.css` (8px radius, light grey border); verified in the browser
+- Value statistics per category: `GET /api/datasets/{id}/stats/` (count, min, avg, max; one `GROUP BY` query); covered by tests
+- Bar chart of the average value per category on the dataset page (`CategoryChart.vue`, Chart.js 4.5 via vue-chartjs); tooltip shows min, max and count; own loading/error/empty state; verified in the browser (9,000-row dataset, 10 categories)
 
 ## In progress
 - None
@@ -38,6 +40,8 @@ MVP: CSV upload → Vuetify table → chart
 - `category` is free text for now; no predefined choices before we see real data
 - Uniqueness rules are enforced by database constraints, not only by validation (safe under concurrent requests)
 - `DatasetViewSet` (`ReadOnlyModelViewSet` + `upload` action) for datasets; records have their own `ListAPIView`, because the endpoint has its own pagination and filters (`@action` cannot set `search_fields`/`ordering_fields`). No nested-router package for a single nested URL
+- Chart data comes from an aggregated endpoint, not from records: the response size depends on the number of categories, not rows, and the table's pagination stays independent. The chart always covers the whole dataset (search filters only the table)
+- Chart.js + vue-chartjs for charts: small, tree-shakeable, enough for bar charts; ECharts considered (box plots built in) but much larger
 - Record search uses DRF's `SearchFilter`; exact field filters (`django-filter`) wait until a UI needs them
 - `AllowAny` set explicitly in `REST_FRAMEWORK`: the MVP has no authentication, and changing it must be deliberate
 - CSV parsing lives in `datasets/csv_import.py` with no Django imports (testable without HTTP/DB, reusable for other input sources); built-in `csv` module with `strict=True`, no pandas
@@ -52,11 +56,8 @@ MVP: CSV upload → Vuetify table → chart
 - Compose `env_file` passes all of `backend/.env` (including `DJANGO_SECRET_KEY`) to the `db` container; scope per service before deployment
 
 ## Next
-- Chart of record values (last MVP item)
+- JWT authentication (see below)
 
 ## Planned (after MVP, before AWS deployment)
 - JWT authentication with djangorestframework-simplejwt: short-lived access token in memory, refresh token in an httpOnly cookie, rotation + blacklist; add `Dataset.owner` at the same time
 - Then Docker setup for Django, then AWS deployment
-
-## Open questions
-- Chart data: records are paginated, so the chart cannot use the table's page. Proposed: a small aggregated endpoint (e.g. value statistics per category) over all records; not decided yet
