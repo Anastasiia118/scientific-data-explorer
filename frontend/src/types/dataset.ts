@@ -21,6 +21,15 @@ export interface SampleRecord {
   value: number
 }
 
+/** Value statistics for one category, from `/datasets/{id}/stats/`. */
+export interface CategoryStats {
+  category: string
+  count: number
+  min: number
+  avg: number
+  max: number
+}
+
 /** One page of a paginated list, as returned by DRF's PageNumberPagination. */
 export interface Page<T> {
   /** Number of matching items across all pages. */

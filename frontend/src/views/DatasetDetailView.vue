@@ -3,8 +3,14 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import type { DataTableSortItem } from 'vuetify'
 import SearchBar from '../components/SearchBar.vue'
 import DataTable from '../components/DataTable.vue'
-import { fetchDataset, fetchDatasetRecords, getErrorMessage } from '../services/api'
-import type { Dataset, SampleRecord } from '../types/dataset'
+import CategoryChart from '../components/CategoryChart.vue'
+import {
+  fetchDataset,
+  fetchDatasetRecords,
+  fetchDatasetStats,
+  getErrorMessage,
+} from '../services/api'
+import type { CategoryStats, Dataset, SampleRecord } from '../types/dataset'
 
 const props = defineProps<{
   id: number
@@ -14,6 +20,11 @@ const props = defineProps<{
 // the view rather than in a global store.
 const dataset = ref<Dataset | null>(null)
 const error = ref<string | null>(null)
+
+// Chart data covers all records, so it does not follow the table's search.
+// null while loading.
+const stats = ref<CategoryStats[] | null>(null)
+const statsError = ref<string | null>(null)
 
 const records = ref<SampleRecord[]>([])
 const total = ref(0)
@@ -51,6 +62,21 @@ watch(
       if (id === props.id) dataset.value = loadedDataset
     } catch (e) {
       if (id === props.id) error.value = getErrorMessage(e, 'Could not load dataset.')
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.id,
+  async (id) => {
+    stats.value = null
+    statsError.value = null
+    try {
+      const loadedStats = await fetchDatasetStats(id)
+      if (id === props.id) stats.value = loadedStats
+    } catch (e) {
+      if (id === props.id) statsError.value = getErrorMessage(e, 'Could not load chart data.')
     }
   },
   { immediate: true },
@@ -118,6 +144,13 @@ onBeforeUnmount(() => {
     <h1 class="dataset-detail__title">{{ dataset?.name ?? 'Dataset' }}</h1>
 
     <p v-if="error" class="dataset-detail__error">{{ error }}</p>
+
+    <p v-if="statsError" class="dataset-detail__error">{{ statsError }}</p>
+    <template v-else-if="stats">
+      <CategoryChart v-if="stats.length > 0" :stats="stats" />
+      <p v-else class="dataset-detail__muted">No records to chart.</p>
+    </template>
+
     <p v-if="recordsError" class="dataset-detail__error">{{ recordsError }}</p>
 
     <div class="dataset-detail__toolbar">
@@ -155,6 +188,12 @@ onBeforeUnmount(() => {
 
 .dataset-detail__toolbar {
   display: flex;
+}
+
+.dataset-detail__muted {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 14px;
 }
 
 .dataset-detail__error {

@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Dataset, Page, SampleRecord } from '../types/dataset'
+import type { CategoryStats, Dataset, Page, SampleRecord } from '../types/dataset'
 
 // All requests go to the Django REST Framework backend. In development,
 // Vite proxies "/api" to http://127.0.0.1:8000 (see vite.config.ts).
@@ -45,6 +45,15 @@ export async function fetchDatasetRecords(
     },
     signal,
   })
+  return response.data
+}
+
+/**
+ * Fetches value statistics per category over all of a dataset's records,
+ * sorted by category. Not affected by the table's search or pagination.
+ */
+export async function fetchDatasetStats(id: number): Promise<CategoryStats[]> {
+  const response = await http.get<CategoryStats[]>(`/datasets/${id}/stats/`)
   return response.data
 }
 
