@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -57,6 +58,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    # Stores used refresh tokens, so they cannot be used again.
+    'rest_framework_simplejwt.token_blacklist',
+    'accounts',
     'datasets',
 ]
 
@@ -97,6 +101,20 @@ REST_FRAMEWORK = {
     # The MVP has no authentication; every endpoint is public. Stated explicitly
     # so that adding authentication is a deliberate change.
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
+    # Limits login attempts per client IP (accounts.views.LoginView). Behind a
+    # load balancer every request has its IP, so NUM_PROXIES must be set then.
+    'DEFAULT_THROTTLE_RATES': {'login': '10/minute'},
+}
+
+# JWT authentication (see accounts/views.py). Tokens are signed with SECRET_KEY.
+SIMPLE_JWT = {
+    # Sent with every request, so a stolen one is only useful briefly.
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
+    # Kept in an httpOnly cookie and only sent to /api/auth/.
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    # Every refresh returns a new refresh token and blocks the old one.
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
 }
 
 
