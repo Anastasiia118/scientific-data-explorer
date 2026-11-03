@@ -24,15 +24,22 @@ class SampleRecordSerializer(serializers.ModelSerializer):
 
 
 class DatasetUploadSerializer(serializers.Serializer):
-    """Input for creating a dataset from a CSV file. The response uses DatasetSerializer."""
+    """
+    Input for creating a dataset from a CSV file. The response uses DatasetSerializer.
+    Needs `request` in the context: the dataset belongs to request.user, and
+    duplicates are only checked among that user's datasets.
+    """
 
     # CharField strips surrounding whitespace by default (trim_whitespace=True).
     name = serializers.CharField(max_length=255)
     file = serializers.FileField()
 
+    def _own_datasets(self):
+        return Dataset.objects.filter(owner=self.context['request'].user)
+
     def validate_name(self, value):
         # A friendly early check; create() handles the race this check cannot prevent.
-        if Dataset.objects.filter(name=value).exists():
+        if self._own_datasets().filter(name=value).exists():
             raise serializers.ValidationError(DUPLICATE_NAME_MESSAGE)
         return value
 
@@ -49,7 +56,7 @@ class DatasetUploadSerializer(serializers.Serializer):
         # Before parsing: a file that was uploaded before was valid then, and
         # "already uploaded" is the more useful message.
         content_hash = hashlib.sha256(content).hexdigest()
-        existing = Dataset.objects.filter(content_hash=content_hash).first()
+        existing = self._own_datasets().filter(content_hash=content_hash).first()
         if existing:
             raise serializers.ValidationError(_duplicate_file_message(existing))
 
@@ -75,14 +82,16 @@ class DatasetUploadSerializer(serializers.Serializer):
                 # Savepoint: after a failed statement PostgreSQL rejects further
                 # queries until a rollback, and the re-check below needs to query.
                 with transaction.atomic():
-                    dataset = Dataset.objects.create(name=name, content_hash=content_hash)
+                    dataset = Dataset.objects.create(
+                        owner=self.context['request'].user, name=name, content_hash=content_hash
+                    )
             except IntegrityError:
                 # Another request created this name or uploaded this file after
                 # validation ran. Re-check which one, since both are possible.
                 errors = {}
-                if Dataset.objects.filter(name=name).exists():
+                if self._own_datasets().filter(name=name).exists():
                     errors['name'] = [DUPLICATE_NAME_MESSAGE]
-                existing = Dataset.objects.filter(content_hash=content_hash).first()
+                existing = self._own_datasets().filter(content_hash=content_hash).first()
                 if existing:
                     errors['file'] = [_duplicate_file_message(existing)]
                 if errors:

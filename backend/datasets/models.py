@@ -1,19 +1,28 @@
+from django.conf import settings
 from django.db import models
 
 
 class Dataset(models.Model):
     """A named collection of sample records created from one uploaded CSV file."""
 
-    name = models.CharField(max_length=255, unique=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='datasets'
+    )
+    name = models.CharField(max_length=255)
     # SHA-256 of the uploaded file's bytes, used to reject identical re-uploads.
-    # Nullable because datasets created before hashing have no file to hash;
-    # PostgreSQL allows any number of NULLs in a unique column. Becomes unique
-    # per owner once datasets have owners.
-    content_hash = models.CharField(max_length=64, unique=True, null=True, editable=False)
+    content_hash = models.CharField(max_length=64, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
+        # Per owner: another user's names and files must not affect (or be
+        # revealed by) your uploads.
+        constraints = [
+            models.UniqueConstraint(fields=['owner', 'name'], name='unique_dataset_name_per_owner'),
+            models.UniqueConstraint(
+                fields=['owner', 'content_hash'], name='unique_content_hash_per_owner'
+            ),
+        ]
 
     def __str__(self):
         return self.name

@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError
 from django.test import SimpleTestCase, TestCase
@@ -5,27 +8,57 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import AccessToken
 
 from .csv_import import MAX_ROWS, ParsedRow, parse_records
 from .models import Dataset, SampleRecord
 from .serializers import DatasetUploadSerializer
 
+User = get_user_model()
+
+
+def make_dataset(owner, name, content_hash=None):
+    # content_hash is required; tests that do not care get a unique one.
+    return Dataset.objects.create(owner=owner, name=name, content_hash=content_hash or f'hash-{name}')
+
+
+class AuthenticatedApiTestCase(APITestCase):
+    """
+    Requests are made as self.user. force_authenticate() skips the token
+    check, which accounts/tests.py and DatasetAccessTests cover.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='ana')
+        self.client.force_authenticate(self.user)
+
 
 class DatasetModelTests(TestCase):
-    def test_name_must_be_unique(self):
-        Dataset.objects.create(name='Run A')
-        with self.assertRaises(IntegrityError):
-            Dataset.objects.create(name='Run A')
+    def setUp(self):
+        self.user = User.objects.create_user(username='ana')
+        self.other_user = User.objects.create_user(username='ben')
 
-    def test_content_hash_must_be_unique_but_may_be_missing(self):
-        Dataset.objects.create(name='Run A')
-        Dataset.objects.create(name='Run B')
-        Dataset.objects.create(name='Run C', content_hash='abc')
+    def test_name_must_be_unique_per_owner(self):
+        make_dataset(self.user, 'Run A', content_hash='a')
+        make_dataset(self.other_user, 'Run A', content_hash='b')
         with self.assertRaises(IntegrityError):
-            Dataset.objects.create(name='Run D', content_hash='abc')
+            make_dataset(self.user, 'Run A', content_hash='c')
+
+    def test_content_hash_must_be_unique_per_owner(self):
+        make_dataset(self.user, 'Run A', content_hash='abc')
+        make_dataset(self.other_user, 'Run A', content_hash='abc')
+        with self.assertRaises(IntegrityError):
+            make_dataset(self.user, 'Run B', content_hash='abc')
+
+    def test_deleting_user_deletes_their_datasets(self):
+        make_dataset(self.user, 'Run A')
+
+        self.user.delete()
+
+        self.assertFalse(Dataset.objects.exists())
 
     def test_deleting_dataset_deletes_its_records(self):
-        dataset = Dataset.objects.create(name='Run A')
+        dataset = make_dataset(self.user, 'Run A')
         SampleRecord.objects.create(dataset=dataset, sample_id='S1', category='a', value=1.0)
 
         dataset.delete()
@@ -35,7 +68,8 @@ class DatasetModelTests(TestCase):
 
 class SampleRecordModelTests(TestCase):
     def setUp(self):
-        self.dataset = Dataset.objects.create(name='Run A')
+        self.user = User.objects.create_user(username='ana')
+        self.dataset = make_dataset(self.user, 'Run A')
 
     def test_sample_id_must_be_unique_within_dataset(self):
         SampleRecord.objects.create(dataset=self.dataset, sample_id='S1', category='a', value=1.0)
@@ -45,17 +79,18 @@ class SampleRecordModelTests(TestCase):
             )
 
     def test_same_sample_id_allowed_in_different_datasets(self):
-        other = Dataset.objects.create(name='Run B')
+        other = make_dataset(self.user, 'Run B')
         SampleRecord.objects.create(dataset=self.dataset, sample_id='S1', category='a', value=1.0)
         SampleRecord.objects.create(dataset=other, sample_id='S1', category='a', value=1.0)
 
         self.assertEqual(SampleRecord.objects.filter(sample_id='S1').count(), 2)
 
 
-class DatasetApiTests(APITestCase):
+class DatasetApiTests(AuthenticatedApiTestCase):
     def setUp(self):
-        self.older = Dataset.objects.create(name='Run A')
-        self.newer = Dataset.objects.create(name='Run B')
+        super().setUp()
+        self.older = make_dataset(self.user, 'Run A')
+        self.newer = make_dataset(self.user, 'Run B')
 
     def test_list_returns_datasets_newest_first(self):
         response = self.client.get(reverse('dataset-list'))
@@ -76,10 +111,11 @@ class DatasetApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
-class DatasetRecordsApiTests(APITestCase):
+class DatasetRecordsApiTests(AuthenticatedApiTestCase):
     def setUp(self):
-        self.dataset = Dataset.objects.create(name='Run A')
-        other = Dataset.objects.create(name='Run B')
+        super().setUp()
+        self.dataset = make_dataset(self.user, 'Run A')
+        other = make_dataset(self.user, 'Run B')
         # Created out of alphabetical order to check that CSV row order is kept.
         SampleRecord.objects.create(dataset=self.dataset, sample_id='S2', category='a', value=2.5)
         SampleRecord.objects.create(dataset=self.dataset, sample_id='S1', category='b', value=1.0)
@@ -126,10 +162,11 @@ class DatasetRecordsApiTests(APITestCase):
         self.assertEqual(self.sample_ids({'search': 'nothing'}), [])
 
 
-class DatasetStatsApiTests(APITestCase):
+class DatasetStatsApiTests(AuthenticatedApiTestCase):
     def setUp(self):
-        self.dataset = Dataset.objects.create(name='Run A')
-        other = Dataset.objects.create(name='Run B')
+        super().setUp()
+        self.dataset = make_dataset(self.user, 'Run A')
+        other = make_dataset(self.user, 'Run B')
         for sample_id, category, value in [
             ('S1', 'treated', 3.0),
             ('S2', 'control', 1.0),
@@ -156,7 +193,7 @@ class DatasetStatsApiTests(APITestCase):
         )
 
     def test_dataset_without_records_returns_empty_list(self):
-        empty = Dataset.objects.create(name='Empty')
+        empty = make_dataset(self.user, 'Empty')
 
         response = self.client.get(reverse('dataset-stats', args=[empty.id]))
 
@@ -174,9 +211,10 @@ class DatasetStatsApiTests(APITestCase):
             self.client.get(self.url)
 
 
-class DatasetRecordsPaginationTests(APITestCase):
+class DatasetRecordsPaginationTests(AuthenticatedApiTestCase):
     def setUp(self):
-        self.dataset = Dataset.objects.create(name='Run A')
+        super().setUp()
+        self.dataset = make_dataset(self.user, 'Run A')
         # 120 records; every value is 1.0 except S5 and S7, so most rows tie
         # when sorting by value.
         SampleRecord.objects.bulk_create(
@@ -381,7 +419,7 @@ def csv_file(content, name='data.csv'):
 VALID_CSV = csv_text(HEADER, 'S1,a,1.5', 'S2,b,2')
 
 
-class DatasetUploadApiTests(APITestCase):
+class DatasetUploadApiTests(AuthenticatedApiTestCase):
     url = reverse('dataset-upload')
 
     def upload(self, name='Run A', content=VALID_CSV):
@@ -392,6 +430,7 @@ class DatasetUploadApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         dataset = Dataset.objects.get()
+        self.assertEqual(dataset.owner, self.user)
         self.assertEqual(response.data, {
             'id': dataset.id, 'name': 'Run A', 'created_at': response.data['created_at'],
         })
@@ -406,7 +445,7 @@ class DatasetUploadApiTests(APITestCase):
         self.assertEqual(Dataset.objects.get().name, 'Run A')
 
     def test_duplicate_name_is_400(self):
-        Dataset.objects.create(name='Run A')
+        make_dataset(self.user, 'Run A')
 
         response = self.upload(name=' Run A ')
 
@@ -428,7 +467,7 @@ class DatasetUploadApiTests(APITestCase):
         self.assertFalse(SampleRecord.objects.exists())
 
     def test_name_and_file_errors_are_reported_together(self):
-        Dataset.objects.create(name='Run A')
+        make_dataset(self.user, 'Run A')
 
         response = self.upload(content=csv_text(HEADER))
 
@@ -481,12 +520,22 @@ class DatasetUploadApiTests(APITestCase):
 
 
 class DatasetUploadSerializerTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='ana')
+
+    def serializer(self):
+        # The serializer only reads request.user from the request.
+        return DatasetUploadSerializer(
+            data={'name': 'Run A', 'file': csv_file(VALID_CSV)},
+            context={'request': SimpleNamespace(user=self.user)},
+        )
+
     def test_name_taken_after_validation_is_a_validation_error(self):
         # Simulates the race: another request creates the same name between
         # validate_name() and the insert in create().
-        serializer = DatasetUploadSerializer(data={'name': 'Run A', 'file': csv_file(VALID_CSV)})
+        serializer = self.serializer()
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        Dataset.objects.create(name='Run A')
+        make_dataset(self.user, 'Run A')
 
         with self.assertRaises(ValidationError) as ctx:
             serializer.save()
@@ -496,9 +545,9 @@ class DatasetUploadSerializerTests(TestCase):
         self.assertFalse(SampleRecord.objects.exists())
 
     def test_file_uploaded_after_validation_is_a_validation_error(self):
-        serializer = DatasetUploadSerializer(data={'name': 'Run A', 'file': csv_file(VALID_CSV)})
+        serializer = self.serializer()
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        Dataset.objects.create(name='Run B', content_hash=serializer.validated_data['file']['content_hash'])
+        make_dataset(self.user, 'Run B', content_hash=serializer.validated_data['file']['content_hash'])
 
         with self.assertRaises(ValidationError) as ctx:
             serializer.save()
@@ -509,7 +558,7 @@ class DatasetUploadSerializerTests(TestCase):
     def test_record_integrity_error_is_not_reported_as_duplicate_name(self):
         # Duplicate rows that slipped past validation are a bug: the error must
         # propagate (500) and the dataset insert must be rolled back.
-        serializer = DatasetUploadSerializer(data={'name': 'Run A', 'file': csv_file(VALID_CSV)})
+        serializer = self.serializer()
         self.assertTrue(serializer.is_valid(), serializer.errors)
         rows = serializer.validated_data['file']['rows']
         serializer.validated_data['file']['rows'] = [rows[0], rows[0]]
@@ -518,3 +567,74 @@ class DatasetUploadSerializerTests(TestCase):
             serializer.save()
 
         self.assertFalse(Dataset.objects.exists())
+
+
+class DatasetAccessTests(APITestCase):
+    """Authentication and ownership: users only see and affect their own datasets."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(username='ana')
+        self.other_user = User.objects.create_user(username='ben')
+        self.dataset = make_dataset(self.owner, 'Run A')
+        SampleRecord.objects.create(dataset=self.dataset, sample_id='S1', category='a', value=1.0)
+
+    def dataset_urls(self):
+        return [
+            reverse('dataset-list'),
+            reverse('dataset-detail', args=[self.dataset.id]),
+            reverse('dataset-records', args=[self.dataset.id]),
+            reverse('dataset-stats', args=[self.dataset.id]),
+        ]
+
+    def test_requests_without_token_are_401(self):
+        for url in [*self.dataset_urls(), reverse('dataset-upload')]:
+            with self.subTest(url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_invalid_token_is_401(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer not-a-token')
+
+        response = self.client.get(reverse('dataset-list'))
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_valid_access_token_is_accepted(self):
+        token = AccessToken.for_user(self.owner)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+        for url in self.dataset_urls():
+            with self.subTest(url):
+                self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)
+
+    def test_other_users_dataset_is_404(self):
+        self.client.force_authenticate(self.other_user)
+
+        for url in self.dataset_urls()[1:]:
+            with self.subTest(url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_list_contains_only_own_datasets(self):
+        make_dataset(self.other_user, 'Run B')
+        self.client.force_authenticate(self.other_user)
+
+        response = self.client.get(reverse('dataset-list'))
+
+        self.assertEqual([d['name'] for d in response.data], ['Run B'])
+
+    def test_other_user_can_reuse_name_and_file(self):
+        self.client.force_authenticate(self.owner)
+        self.client.post(
+            reverse('dataset-upload'), {'name': 'Run X', 'file': csv_file(VALID_CSV)}, format='multipart'
+        )
+        self.client.force_authenticate(self.other_user)
+
+        response = self.client.post(
+            reverse('dataset-upload'), {'name': 'Run X', 'file': csv_file(VALID_CSV)}, format='multipart'
+        )
+
+        # Also shows that the "already uploaded as ..." message cannot reveal
+        # another user's dataset name.
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Dataset.objects.filter(name='Run X').count(), 2)

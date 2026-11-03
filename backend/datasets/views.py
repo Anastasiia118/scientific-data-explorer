@@ -19,18 +19,24 @@ class DatasetViewSet(ReadOnlyModelViewSet):
     GET /datasets/{id}/          retrieve one dataset
     GET /datasets/{id}/stats/    value statistics per category
     POST /datasets/upload/       create a dataset from a CSV file
+
+    Users only see their own datasets; another user's dataset is a 404, so its
+    id does not reveal that it exists.
     """
 
-    queryset = Dataset.objects.all()
     serializer_class = DatasetSerializer
     # Only numeric ids match the URL; anything else is a 404 from the router.
     lookup_value_regex = r'\d+'
+
+    def get_queryset(self):
+        return Dataset.objects.filter(owner=self.request.user)
 
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser])
     def upload(self, request):
         # Separate input and output serializers: the client sends name + file
         # and receives the created dataset.
-        serializer = DatasetUploadSerializer(data=request.data)
+        # The context carries request.user, the new dataset's owner.
+        serializer = DatasetUploadSerializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)
         dataset = serializer.save()
         return Response(DatasetSerializer(dataset).data, status=status.HTTP_201_CREATED)
@@ -90,6 +96,6 @@ class DatasetRecordListView(ListAPIView):
     ordering_fields = ['sample_id', 'category', 'value']
 
     def get_queryset(self):
-        # 404 for an unknown dataset instead of an empty list.
-        dataset = get_object_or_404(Dataset, pk=self.kwargs['pk'])
+        # 404 for an unknown dataset, or another user's, instead of an empty list.
+        dataset = get_object_or_404(Dataset, pk=self.kwargs['pk'], owner=self.request.user)
         return dataset.records.all()

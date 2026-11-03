@@ -98,9 +98,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://www.django-rest-framework.org/api-guide/settings/
 
 REST_FRAMEWORK = {
-    # The MVP has no authentication; every endpoint is public. Stated explicitly
-    # so that adding authentication is a deliberate change.
-    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
+    # Every endpoint requires a valid access token unless a view opts out
+    # (the auth endpoints in accounts/views.py).
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
     # Limits login attempts per client IP (accounts.views.LoginView). Behind a
     # load balancer every request has its IP, so NUM_PROXIES must be set then.
     'DEFAULT_THROTTLE_RATES': {'login': '10/minute'},

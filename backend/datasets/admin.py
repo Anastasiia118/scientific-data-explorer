@@ -5,8 +5,10 @@ from .models import Dataset, SampleRecord
 
 @admin.register(Dataset)
 class DatasetAdmin(admin.ModelAdmin):
-    list_display = ['name', 'created_at']
+    list_display = ['name', 'owner', 'created_at']
+    list_filter = ['owner']
     search_fields = ['name']
+    list_select_related = ['owner']
 
 
 @admin.register(SampleRecord)
